@@ -1,23 +1,26 @@
 /*
- * Copyright (c) 2023 Aaron Liu
+ * Copyright (c) 2017-2023, Stefan Haustein, Aaron Liu
  *
- *  This file is free software: you may copy, redistribute and/or modify it
- *  under the terms of the GNU General Public License as published by the
- *  Free Software Foundation, either version 3 of the License, or (at your
- *  option) any later version.
+ * Despite what git blame might say, most of the code was made by Stefan
+ * Haustein. The file history got messed up by my awful decision to move and
+ * format a file in the same commit. View the history of src/cpp/tiv.cpp for the
+ * original history.
  *
- *  This file is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  General Public License for more details.
+ *     This file is free software: you may copy, redistribute and/or modify it
+ *     under the terms of the GNU General Public License as published by the
+ *     Free Software Foundation, either version 3 of the License, or (at your
+ *     option) any later version.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *     This file is distributed in the hope that it will be useful, but
+ *     WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *     General Public License for more details.
  *
- * This file incorporates work covered by the following copyright and
- * permission notice:
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
- *     Copyright (c) 2017—2021, Stefan Haustein
+ * Alternatively, you may copy, redistribute and/or modify this file under
+ * the terms of the Apache License, version 2.0:
  *
  *     Licensed under the Apache License, Version 2.0 (the "License");
  *     you may not use this file except in compliance with the License.
@@ -32,28 +35,15 @@
  *     limitations under the License.
  */
 
-#include <array>
-#include <bitset>
-#include <cmath>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <map>
-#include <string>
-#include <vector>
-
-// CImg, the superior grafiks library
-#define cimg_display 0
-#include "CImg.h"
-
-// First include for detecting console output size,
-// everything else for exit codes
 #ifdef _POSIX_VERSION
+// Console output size detection
 #include <sys/ioctl.h>
+// Exit codes
 #include <sysexits.h>
 #endif
 
 #ifdef _WIN32
+// Console output size detection
 #include <windows.h>
 
 // Following codes copied from /usr/include/sysexits.h,
@@ -71,26 +61,46 @@
 #define EX_CONFIG 78    /* configuration error */
 #endif
 
-// using namespace std; // haha nope, bad style
-// especially when we're also using the CImg namespace
+#include <array>
+#include <bitset>
+#include <cmath>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
 
+// This #define tells CImg that we use the library without any display options,
+// just for loading images.
+#define cimg_display 0
+#include "CImg.h"
+// CImg defines its own min and max macros to compile, so we need to undef them
+#undef min
+#undef max
+
+// @TODO: Convert to bitset
 // Implementation of flag representation for flags in the main() method
-constexpr int FLAG_FG = 1;
-constexpr int FLAG_BG = 2;
+constexpr int FLAG_FG = 1;         // emit fg color
+constexpr int FLAG_BG = 2;         // emit bg color
 constexpr int FLAG_MODE_256 = 4;   // Limit colors to 256-color mode
 constexpr int FLAG_24BIT = 8;      // 24-bit color mode
 constexpr int FLAG_NOOPT = 16;     // Only use the same half-block character
 constexpr int FLAG_TELETEXT = 32;  // Use teletext characters
 
-// Steps (@TODO: Figure out what exactly they represent)
+// Color saturation value steps from 0 to 255
 constexpr int COLOR_STEP_COUNT = 6;
 constexpr int COLOR_STEPS[COLOR_STEP_COUNT] = {0, 0x5f, 0x87, 0xaf, 0xd7, 0xff};
 
+// Grayscale saturation value steps from 0 to 255
 constexpr int GRAYSCALE_STEP_COUNT = 24;
 constexpr int GRAYSCALE_STEPS[GRAYSCALE_STEP_COUNT] = {
     0x08, 0x12, 0x1c, 0x26, 0x30, 0x3a, 0x44, 0x4e, 0x58, 0x62, 0x6c, 0x76,
     0x80, 0x8a, 0x94, 0x9e, 0xa8, 0xb2, 0xbc, 0xc6, 0xd0, 0xda, 0xe4, 0xee};
 
+// An interleaved map of 4x8 bit character bitmaps (each hex digit represents a
+// row) to the corresponding unicode character code point.
 constexpr unsigned int BITMAPS[] = {
     0x00000000, 0x00a0,
 
@@ -224,8 +234,8 @@ struct CharData {
     int codePoint;
 };
 
-// Return a CharData struct with the given code point and corresponding averag
-// fg and bg colors.
+// Return a CharData struct with the given code point and corresponding
+// average fg and bg colors.
 CharData createCharData(const cimg_library::CImg<unsigned char> &image, int x0,
                         int y0, int codepoint, int pattern) {
     CharData result;
@@ -264,17 +274,17 @@ CharData createCharData(const cimg_library::CImg<unsigned char> &image, int x0,
 }
 
 /**
- * @brief Find the best character and colors
- * for a 4x8 part of the image at the given position
+ * @brief Find the best character and colors for the given 4x8 area of the image
  *
- * @param image
- * @param x0
- * @param y0
+ * @param image The image where the pixels reside
+ * @param x0 The x coordinate of the top left pixel of the area
+ * @param y0 The y coordinate of the top left pixel of the area
  * @param flags
- * @return CharData
+ * @return The @ref CharData representation of the colors and character best
+ * used to render the 4x8 area
  */
 CharData findCharData(const cimg_library::CImg<unsigned char> &image, int x0,
-                      int y0, const int &flags) {
+                      int y0, const int8_t &flags) {
     int min[3] = {255, 255, 255};
     int max[3] = {0};
     std::map<long, int> count_per_color;
@@ -287,6 +297,7 @@ CharData findCharData(const cimg_library::CImg<unsigned char> &image, int x0,
                 int d = image(x0 + x, y0 + y, 0, i);
                 min[i] = std::min(min[i], d);
                 max[i] = std::max(max[i], d);
+
                 color = (color << 8) | d;
             }
             count_per_color[color]++;
@@ -418,18 +429,17 @@ int best_index(int value, const int STEPS[], int count) {
     return result;
 }
 
-void emit_color(const int &flags, int r, int g, int b) {
-    r = clamp_byte(r);
-    g = clamp_byte(g);
-    b = clamp_byte(b);
+std::string emitTermColor(const int8_t &flags, int r, int g, int b) {
+    r = clamp_byte(r), g = clamp_byte(g), b = clamp_byte(b);
 
-    bool bg = (flags & FLAG_BG) != 0;
+    const bool bg = (flags & FLAG_BG);
 
-    if ((flags & FLAG_MODE_256) == 0) {
-        std::cout << (bg ? "\x1b[48;2;" : "\x1b[38;2;") << r << ';' << g << ';'
-                  << b << 'm';
-        return;
+    if (!(flags & FLAG_MODE_256)) {
+        // 2 means we output true (RGB) colors
+        return std::format("\x1b[{};2;{};{};{}m", bg ? 48 : 38, r, g, b);
     }
+
+    // Compute predefined color index from all 256 colors we should use
 
     int ri = best_index(r, COLOR_STEPS, COLOR_STEP_COUNT);
     int gi = best_index(g, COLOR_STEPS, COLOR_STEP_COUNT);
@@ -452,7 +462,8 @@ void emit_color(const int &flags, int r, int g, int b) {
     } else {
         color_index = 232 + gri;  // 1..24 -> 232..255
     }
-    std::cout << (bg ? "\x1B[48;5;" : "\u001B[38;5;") << color_index << "m";
+    // 38 sets the foreground color and 48 sets the background color
+    return std::format("\x1b[{};5;{}m", bg ? 48 : 38, color_index);
 }
 
 void emitCodepoint(int codepoint) {
@@ -475,25 +486,86 @@ void emitCodepoint(int codepoint) {
     }
 }
 
-void emit_image(const cimg_library::CImg<unsigned char> &image,
-                const int &flags) {
+std::string emitImage(const cimg_library::CImg<unsigned char> &image,
+                          const int8_t &flags) {
+    std::string ret;
     CharData lastCharData;
     for (int y = 0; y <= image.height() - 8; y += 8) {
         for (int x = 0; x <= image.width() - 4; x += 4) {
+            // Create CharData for the current 4x8 area of the image
+            // If only half-block chars are allowed, use predefined codepoint
             CharData charData =
                 flags & FLAG_NOOPT
                     ? createCharData(image, x, y, 0x2584, 0x0000ffff)
                     : findCharData(image, x, y, flags);
             if (x == 0 || charData.bgColor != lastCharData.bgColor)
-                emit_color(flags | FLAG_BG, charData.bgColor[0],
-                           charData.bgColor[1], charData.bgColor[2]);
+                ret += emitTermColor(flags | FLAG_BG, charData.bgColor[0],
+                                     charData.bgColor[1], charData.bgColor[2]);
             if (x == 0 || charData.fgColor != lastCharData.fgColor)
-                emit_color(flags | FLAG_FG, charData.fgColor[0],
-                           charData.fgColor[1], charData.fgColor[2]);
-            emitCodepoint(charData.codePoint);
+                ret += emitTermColor(flags | FLAG_FG, charData.fgColor[0],
+                            charData.fgColor[1], charData.fgColor[2]);
+            ret += (charData.codePoint);
             lastCharData = charData;
         }
-        std::cout << "\x1b[0m" << std::endl;
+        ret += "\x1b[0m\n";  // clear formatting until next batch
+    }
+    return ret;
+}
+
+/**
+ * @brief Helper function to print a codepoint in a terminal-friendly way
+ *
+ * @param codepoint The codepoint to print
+ */
+void printCodepoint(int codepoint) {
+    if (codepoint < 128) {  // ASCII
+        std::cout << static_cast<char>(codepoint);
+    } else if (codepoint < 0x7ff) {  // 2-byte UTF-8
+        std::cout << static_cast<char>(0xc0 | (codepoint >> 6));
+        std::cout << static_cast<char>(0x80 | (codepoint & 0x3f));
+    } else if (codepoint < 0xffff) {  // 3-byte UTF-8
+        std::cout << static_cast<char>(0xe0 | (codepoint >> 12));
+        std::cout << static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
+        std::cout << static_cast<char>(0x80 | (codepoint & 0x3f));
+    } else if (codepoint < 0x10ffff) {  // 4-byte UTF-8
+        std::cout << static_cast<char>(0xf0 | (codepoint >> 18));
+        std::cout << static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f));
+        std::cout << static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
+        std::cout << static_cast<char>(0x80 | (codepoint & 0x3f));
+    } else {  //???
+        std::cerr << std::format(
+            "Error: Codepoint 0x{:08x} is out of range, skipping this pixel",
+            codepoint);
+    }
+}
+
+/**
+ * @brief Outputs the given image.
+ *
+ * @param image The image to output.
+ * @param flags
+ */
+void printImage(const cimg_library::CImg<unsigned char> &image,
+                const int8_t &flags) {
+    CharData lastCharData;
+    for (int y = 0; y <= image.height() - 8; y += 8) {
+        for (int x = 0; x <= image.width() - 4; x += 4) {
+            // Create CharData for the current 4x8 area of the image
+            // If only half-block chars are allowed, use predefined codepoint
+            CharData charData =
+                flags & FLAG_NOOPT
+                    ? createCharData(image, x, y, 0x2584, 0x0000ffff)
+                    : findCharData(image, x, y, flags);
+            if (x == 0 || charData.bgColor != lastCharData.bgColor)
+                std::cout << emitTermColor(flags | FLAG_BG, charData.bgColor[0],
+                            charData.bgColor[1], charData.bgColor[2]);
+            if (x == 0 || charData.fgColor != lastCharData.fgColor)
+                std::cout << emitTermColor(flags | FLAG_FG, charData.fgColor[0],
+                            charData.fgColor[1], charData.fgColor[2]);
+            printCodepoint(charData.codePoint);
+            lastCharData = charData;
+        }
+        std::cout << "\x1b[0m\n";  // clear formatting until next batch
     }
 }
 
@@ -538,9 +610,9 @@ cimg_library::CImg<unsigned char> load_rgb_CImg(const char *const &filename) {
 }
 
 // Implements --help
-void emit_usage() {
+void printUsage() {
     std::cerr << R"(
-Terminal Image Viewer v1.2.1
+Terminal Image Viewer v1.3
 usage: tiv [options] <image> [<image>...]
 -0        : No block character adjustment, always use top half block char.
 -2, --256 : Use 256-bit colors. Needed to display properly on macOS Terminal.
@@ -560,7 +632,9 @@ int main(int argc, char *argv[]) {
     std::ios::sync_with_stdio(false);  // apparently makes printing faster
 
     // Platform-specific implementations for determining console size, better
-    // implementations are welcome Fallback sizes when unsuccesful
+    // implementations are welcome
+
+    // Fallback sizes when unsuccesful. Sizes are actually 1/4th of the actual
     int maxWidth = 80;
     int maxHeight = 24;
 #ifdef _POSIX_VERSION
@@ -570,7 +644,7 @@ int main(int argc, char *argv[]) {
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != 0 ||
         (w.ws_col | w.ws_row) == 0) {
         std::cerr << "Warning: failed to determine most reasonable size, "
-                     "defaulting to 80x24"
+                     "defaulting to 20x6"
                   << std::endl;
     } else {
         maxWidth = w.ws_col * 4;
@@ -586,16 +660,16 @@ int main(int argc, char *argv[]) {
     } else {
         std::cerr
             << "Warning: failed to determine most reasonable size: Error code"
-            << GetLastError() << ", defaulting to 80x24" << std::endl;
+            << GetLastError() << ", defaulting to 20x6" << std::endl;
     }
 #else
     std::cerr << "Warning: failed to determine most reasonable size: "
-                 "unrecognized system, defaulting to 80x24"
+                 "unrecognized system, defaulting to 20x6"
               << std::endl;
 #endif
 
     // Reading input
-    char flags = 0;    // bitwise representation of flags,
+    int8_t flags = 0;  // bitwise representation of flags,
                        // see https://stackoverflow.com/a/14295472
     Mode mode = AUTO;  // either THUMBNAIL or FULL_SIZE
     int columns = 3;
@@ -604,7 +678,7 @@ int main(int argc, char *argv[]) {
     int ret = EX_OK;  // The return code for the program
 
     if (argc <= 1) {
-        emit_usage();
+        printUsage();
         return 0;
     }
 
@@ -634,11 +708,11 @@ int main(int argc, char *argv[]) {
             if (i < argc - 1)
                 maxHeight = 8 * std::stoi(argv[++i]);
             else
-                emit_usage();
+                printUsage();
         } else if (arg == "--256" || arg == "-2" || arg == "-256") {
             flags |= FLAG_MODE_256;
         } else if (arg == "--help" || arg == "-help") {
-            emit_usage();
+            printUsage();
         } else if (arg == "-x") {
             flags |= FLAG_TELETEXT;
         } else if (arg[0] == '-') {
@@ -676,8 +750,10 @@ int main(int argc, char *argv[]) {
                     image.resize(new_size.width, new_size.height, -100, -100,
                                  5);
                 }
-                // the acutal magic which generates the output
-                emit_image(image, flags);
+                // the actual magick which generates the output
+                printImage(image, flags);
+                std::cout.flush();  // replaces last endl to make sure we get
+                                    // output on screen
             } catch (cimg_library::CImgIOException &e) {
                 std::cerr << "Error: '" << filename
                           << "' has an unrecognized file format" << std::endl;
@@ -717,8 +793,8 @@ int main(int argc, char *argv[]) {
                     // Probably no image; ignore.
                 }
             }
-            if (count) emit_image(image, flags);
-            std::cout << sb << std::endl << std::endl;
+            if (count) printImage(image, flags);
+            std::cout << sb << '\n' << std::endl;
         }
     }
     return ret;
