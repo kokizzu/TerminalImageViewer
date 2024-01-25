@@ -35,6 +35,25 @@
  *     limitations under the License.
  */
 
+#include <array>
+#include <bitset>
+#include <cmath>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+
+// This #define tells CImg that we use the library without any display options,
+// just for loading images.
+#define cimg_display 0
+#include "CImg.h"
+// CImg defines its own min and max macros to compile, so we need to undef them
+#undef min
+#undef max
+
 #ifdef _POSIX_VERSION
 // Console output size detection
 #include <sys/ioctl.h>
@@ -60,25 +79,6 @@
 #define EX_NOPERM 77    /* permission denied */
 #define EX_CONFIG 78    /* configuration error */
 #endif
-
-#include <array>
-#include <bitset>
-#include <cmath>
-#include <filesystem>
-#include <format>
-#include <fstream>
-#include <iostream>
-#include <map>
-#include <string>
-#include <vector>
-
-// This #define tells CImg that we use the library without any display options,
-// just for loading images.
-#define cimg_display 0
-#include "CImg.h"
-// CImg defines its own min and max macros to compile, so we need to undef them
-#undef min
-#undef max
 
 // @TODO: Convert to bitset
 // Implementation of flag representation for flags in the main() method
