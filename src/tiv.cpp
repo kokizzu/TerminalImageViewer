@@ -57,6 +57,8 @@
 #ifdef _POSIX_VERSION
 // Console output size detection
 #include <sys/ioctl.h>
+// Error explanation, for some reason
+#include <cstring>
 // Exit codes
 #include <sysexits.h>
 #endif
@@ -64,6 +66,8 @@
 #ifdef _WIN32
 // Console output size detection
 #include <windows.h>
+// Error explanation
+#include <system_error>
 
 // Following codes copied from /usr/include/sysexits.h,
 // license: https://opensource.org/license/BSD-3-clause/
@@ -487,7 +491,7 @@ void emitCodepoint(int codepoint) {
 }
 
 std::string emitImage(const cimg_library::CImg<unsigned char> &image,
-                          const int8_t &flags) {
+                      const int8_t &flags) {
     std::string ret;
     CharData lastCharData;
     for (int y = 0; y <= image.height() - 8; y += 8) {
@@ -503,7 +507,7 @@ std::string emitImage(const cimg_library::CImg<unsigned char> &image,
                                      charData.bgColor[1], charData.bgColor[2]);
             if (x == 0 || charData.fgColor != lastCharData.fgColor)
                 ret += emitTermColor(flags | FLAG_FG, charData.fgColor[0],
-                            charData.fgColor[1], charData.fgColor[2]);
+                                     charData.fgColor[1], charData.fgColor[2]);
             ret += (charData.codePoint);
             lastCharData = charData;
         }
@@ -558,10 +562,12 @@ void printImage(const cimg_library::CImg<unsigned char> &image,
                     : findCharData(image, x, y, flags);
             if (x == 0 || charData.bgColor != lastCharData.bgColor)
                 std::cout << emitTermColor(flags | FLAG_BG, charData.bgColor[0],
-                            charData.bgColor[1], charData.bgColor[2]);
+                                           charData.bgColor[1],
+                                           charData.bgColor[2]);
             if (x == 0 || charData.fgColor != lastCharData.fgColor)
                 std::cout << emitTermColor(flags | FLAG_FG, charData.fgColor[0],
-                            charData.fgColor[1], charData.fgColor[2]);
+                                           charData.fgColor[1],
+                                           charData.fgColor[2]);
             printCodepoint(charData.codePoint);
             lastCharData = charData;
         }
@@ -630,43 +636,11 @@ enum Mode { AUTO, THUMBNAILS, FULL_SIZE };
 
 int main(int argc, char *argv[]) {
     std::ios::sync_with_stdio(false);  // apparently makes printing faster
-
-    // Platform-specific implementations for determining console size, better
-    // implementations are welcome
+    bool detectSize = true;
 
     // Fallback sizes when unsuccesful. Sizes are actually 1/4th of the actual
     int maxWidth = 80;
     int maxHeight = 24;
-#ifdef _POSIX_VERSION
-    struct winsize w;
-    // If redirecting STDOUT to one file ( col or row == 0, or the previous
-    // ioctl call's failed )
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != 0 ||
-        (w.ws_col | w.ws_row) == 0) {
-        std::cerr << "Warning: failed to determine most reasonable size, "
-                     "defaulting to 20x6"
-                  << std::endl;
-    } else {
-        maxWidth = w.ws_col * 4;
-        maxHeight = w.ws_row * 8;
-    }
-#elif defined _WIN32
-    CONSOLE_SCREEN_BUFFER_INFO w;
-    if (GetConsoleScreenBufferInfo(
-            GetStdHandle(STD_OUTPUT_HANDLE),
-            &w)) {  // just like powershell, but without the hyphens, hooray
-        maxWidth = w.dwSize.X * 4;
-        maxHeight = w.dwSize.Y * 8;
-    } else {
-        std::cerr
-            << "Warning: failed to determine most reasonable size: Error code"
-            << GetLastError() << ", defaulting to 20x6" << std::endl;
-    }
-#else
-    std::cerr << "Warning: failed to determine most reasonable size: "
-                 "unrecognized system, defaulting to 20x6"
-              << std::endl;
-#endif
 
     // Reading input
     int8_t flags = 0;  // bitwise representation of flags,
@@ -679,7 +653,7 @@ int main(int argc, char *argv[]) {
 
     if (argc <= 1) {
         printUsage();
-        return 0;
+        return EX_USAGE;
     }
 
     for (int i = 1; i < argc; i++) {
@@ -699,16 +673,16 @@ int main(int argc, char *argv[]) {
             mode = FULL_SIZE;
         } else if (arg == "-w") {
             if (i < argc - 1) {
-                maxWidth = 4 * std::stoi(argv[++i]);
+                maxWidth = 4 * std::stoi(argv[++i]), detectSize = false;
             } else {
                 std::cerr << "Error: -w requires a number" << std::endl;
                 ret = EX_USAGE;
             }
         } else if (arg == "-h") {
             if (i < argc - 1)
-                maxHeight = 8 * std::stoi(argv[++i]);
+                maxHeight = 8 * std::stoi(argv[++i]), detectSize = false;
             else
-                printUsage();
+                printUsage();  // people might confuse this with help
         } else if (arg == "--256" || arg == "-2" || arg == "-256") {
             flags |= FLAG_MODE_256;
         } else if (arg == "--help" || arg == "-help") {
@@ -725,7 +699,7 @@ int main(int argc, char *argv[]) {
                     if (std::filesystem::is_regular_file(p.path()))
                         file_names.push_back(p.path().string());
             } else {
-                // Check if file can be opened
+                // Check if file can be opened, @TODO find better way
                 std::ifstream fin(arg.c_str());
                 if (fin) {
                     file_names.push_back(arg);
@@ -736,6 +710,40 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
+    }
+
+    if (detectSize) {
+        // Platform-specific implementations for determining console size,
+        // better implementations are welcome
+#ifdef _POSIX_VERSION
+        struct winsize w;
+        // If redirecting STDOUT to one file ( col or row == 0, or the previous
+        // ioctl call's failed )
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != 0 ||
+            (w.ws_col | w.ws_row) == 0) {
+            std::cerr << "Warning: failed to determine most reasonable size: "
+                      << strerror(errno) << ", defaulting to 20x6" << std::endl;
+        } else {
+            maxWidth = w.ws_col * 4;
+            maxHeight = w.ws_row * 8;
+        }
+#elif defined _WIN32
+        CONSOLE_SCREEN_BUFFER_INFO w;
+        if (GetConsoleScreenBufferInfo(
+                GetStdHandle(STD_OUTPUT_HANDLE),
+                &w)) {  // just like powershell, but without the hyphens, hooray
+            maxWidth = w.dwSize.X * 4;
+            maxHeight = w.dwSize.Y * 8;
+        } else {
+            std::cerr << "Warning: failed to determine most reasonable size: "
+                      << std::system_category().message(GetLastError())
+                      << ", defaulting to 20x6" << std::endl;
+        }
+#else
+        std::cerr << "Warning: failed to determine most reasonable size: "
+                     "unrecognized system, defaulting to 20x6"
+                  << std::endl;
+#endif
     }
 
     if (mode == FULL_SIZE || (mode == AUTO && file_names.size() == 1)) {
